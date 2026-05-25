@@ -18,7 +18,6 @@ const path = require('path');
 // Daten speichern
 const dataFilePath = path.join(__dirname, 'applications.json');
 
-// Daten laden oder neu erstellen
 let applications = {
     pending: [],
     accepted: [],
@@ -44,10 +43,8 @@ function saveData() {
     }
 }
 
-// Initial laden
 loadData();
 
-// Map für schnellen Zugriff
 const pendingApplications = new Map();
 applications.pending.forEach(app => {
     pendingApplications.set(app.id, app);
@@ -82,9 +79,7 @@ client.once(Events.ClientReady, async () => {
     }
 });
 
-// Admin-Log Funktion (Discord Channel + Datei)
 async function sendAdminLog(interaction, action, details, color = '#00FF00') {
-    // Discord Channel Log
     const logChannel = interaction.guild.channels.cache.get(config.adminLogChannelId);
     if (logChannel) {
         const embed = new EmbedBuilder()
@@ -98,13 +93,11 @@ async function sendAdminLog(interaction, action, details, color = '#00FF00') {
         await logChannel.send({ embeds: [embed] });
     }
     
-    // Datei-Log
     const logEntry = `[${new Date().toISOString()}] ${action} by ${interaction.user.tag}: ${details}\n`;
     const logFilePath = path.join(__dirname, 'admin_logs.txt');
     fs.appendFileSync(logFilePath, logEntry);
 }
 
-// Admin-Log Funktion für neue Bewerbungen
 async function sendApplicationLog(interaction, role, userInfo) {
     const logEntry = `[${new Date().toISOString()}] Neue Bewerbung: ${role} von ${userInfo.tag} (${userInfo.id})\n`;
     const logFilePath = path.join(__dirname, 'application_logs.txt');
@@ -114,13 +107,7 @@ async function sendApplicationLog(interaction, role, userInfo) {
 function createEmbed() {
     return new EmbedBuilder()
         .setTitle('🎓 Bewerbungs System')
-        .setDescription(`
-Willkommen zum Bewerbungs-System.
-🛡️ Supporter
-🛡️ Moderator
-👑 Admin
-Klicke auf einen Button.
-        `)
+        .setDescription('Willkommen zum Bewerbungs-System.\n🛡️ Supporter\n🛡️ Moderator\n👑 Admin\nKlicke auf einen Button.')
         .setColor(0x5865F2)
         .setTimestamp();
 }
@@ -171,49 +158,35 @@ function createModal(role) {
         new ActionRowBuilder().addComponents(exp),
         new ActionRowBuilder().addComponents(why)
     );
+    
     return modal;
 }
 
-// Helper: Prüfe Admin
 function isAdmin(member) {
     return member.permissions.has('Administrator') || 
            member.roles.cache.has(config.adminRoleId);
 }
 
 client.on(Events.InteractionCreate, async interaction => {
-    // /bewerbung Panel erstellen
     if (interaction.isChatInputCommand()) {
         if (interaction.commandName === 'bewerbung') {
             if (!isAdmin(interaction.member)) {
-                return interaction.reply({
-                    content: '❌ Keine Rechte',
-                    ephemeral: true
-                });
+                return interaction.reply({ content: '❌ Keine Rechte', ephemeral: true });
             }
             await interaction.channel.send({
                 embeds: [createEmbed()],
                 components: [createButtons()]
             });
-            return interaction.reply({
-                content: '✅ Panel erstellt',
-                ephemeral: true
-            });
+            return interaction.reply({ content: '✅ Panel erstellt', ephemeral: true });
         }
         
-        // /bewerbungen - Zeige offene Bewerbungen (Admin)
         if (interaction.commandName === 'bewerbungen') {
             if (!isAdmin(interaction.member)) {
-                return interaction.reply({
-                    content: '❌ Keine Rechte',
-                    ephemeral: true
-                });
+                return interaction.reply({ content: '❌ Keine Rechte', ephemeral: true });
             }
             
             if (pendingApplications.size === 0) {
-                return interaction.reply({
-                    content: '📭 Keine offenen Bewerbungen',
-                    ephemeral: true
-                });
+                return interaction.reply({ content: '📭 Keine offenen Bewerbungen', ephemeral: true });
             }
             
             let description = '';
@@ -226,31 +199,20 @@ client.on(Events.InteractionCreate, async interaction => {
                 .setDescription(description)
                 .setColor(0x5865F2);
             
-            return interaction.reply({
-                embeds: [embed],
-                ephemeral: true
-            });
+            return interaction.reply({ embeds: [embed], ephemeral: true });
         }
         
-        // /bewerbungslog - Zeige alle Bewerbungen (Admin)
         if (interaction.commandName === 'bewerbungslog') {
             if (!isAdmin(interaction.member)) {
-                return interaction.reply({
-                    content: '❌ Keine Rechte',
-                    ephemeral: true
-                });
+                return interaction.reply({ content: '❌ Keine Rechte', ephemeral: true });
             }
             
             const allApps = [...applications.pending, ...applications.accepted, ...applications.rejected];
             
             if (allApps.length === 0) {
-                return interaction.reply({
-                    content: '📭 Keine Bewerbungen vorhanden',
-                    ephemeral: true
-                });
+                return interaction.reply({ content: '📭 Keine Bewerbungen vorhanden', ephemeral: true });
             }
             
-            // Sortieren nach Datum (neueste zuerst)
             allApps.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
             
             let pendingList = applications.pending.map(a => `⏳ **${a.id}** - ${a.role} von ${a.userTag}`).join('\n') || 'Keine';
@@ -267,20 +229,15 @@ client.on(Events.InteractionCreate, async interaction => {
                 .setColor(0x5865F2)
                 .setTimestamp();
             
-            return interaction.reply({
-                embeds: [embed],
-                ephemeral: true
-            });
+            return interaction.reply({ embeds: [embed], ephemeral: true });
         }
     }
     
-    // Button Klicks - Modal anzeigen
     if (interaction.isButton() && interaction.customId.startsWith('bewerbung_')) {
         const role = interaction.customId.replace('bewerbung_', '');
         await interaction.showModal(createModal(role));
     }
     
-    // Modal einreichen
     if (interaction.isModalSubmit()) {
         const role = interaction.customId.replace('modal_', '');
         const age = interaction.fields.getTextInputValue('age');
@@ -299,18 +256,15 @@ client.on(Events.InteractionCreate, async interaction => {
             timestamp: new Date().toISOString()
         };
         
-        // Speichern
         pendingApplications.set(applicationId, applicationData);
         applications.pending.push(applicationData);
         saveData();
         
-        // Application Log (Datei)
         await sendApplicationLog(interaction, role, {
             tag: interaction.user.tag,
             id: interaction.user.id
         });
         
-        // Log Channel für neue Bewerbungen
         const logChannel = interaction.guild.channels.cache.get(config.logChannelId);
         const embed = new EmbedBuilder()
             .setTitle(`📝 Neue ${role} Bewerbung`)
@@ -340,24 +294,17 @@ client.on(Events.InteractionCreate, async interaction => {
                                 .setStyle(ButtonStyle.Danger)
                         )
                 ]
-            );
+            });
             applicationData.messageId = msg.id;
         }
         
-        await interaction.reply({
-            content: '✅ Bewerbung gesendet!',
-            ephemeral: true
-        });
+        await interaction.reply({ content: '✅ Bewerbung gesendet!', ephemeral: true });
     }
     
-    // Admin: Bewerbung annehmen oder ablehnen
     if (interaction.isButton()) {
         if (interaction.customId.startsWith('approve_') || interaction.customId.startsWith('reject_')) {
             if (!isAdmin(interaction.member)) {
-                return interaction.reply({
-                    content: '❌ Keine Rechte',
-                    ephemeral: true
-                });
+                return interaction.reply({ content: '❌ Keine Rechte', ephemeral: true });
             }
             
             const appId = interaction.customId.replace('approve_', '').replace('reject_', '');
@@ -365,13 +312,9 @@ client.on(Events.InteractionCreate, async interaction => {
             const application = pendingApplications.get(appId);
             
             if (!application) {
-                return interaction.reply({
-                    content: '❌ Bewerbung nicht gefunden',
-                    ephemeral: true
-                });
+                return interaction.reply({ content: '❌ Bewerbung nicht gefunden', ephemeral: true });
             }
             
-            // User informieren
             const user = await client.users.fetch(application.userId);
             if (user) {
                 const resultEmbed = new EmbedBuilder()
@@ -385,7 +328,6 @@ client.on(Events.InteractionCreate, async interaction => {
                 await user.send({ embeds: [resultEmbed] });
             }
             
-            // ADMIN LOG senden
             await sendAdminLog(
                 interaction,
                 isApproved ? 'Bewerbung angenommen' : 'Bewerbung abgelehnt',
@@ -393,7 +335,6 @@ client.on(Events.InteractionCreate, async interaction => {
                 isApproved ? '#00FF00' : '#FF0000'
             );
             
-            // In Datenbank verschieben
             pendingApplications.delete(appId);
             applications.pending = applications.pending.filter(a => a.id !== appId);
             
@@ -404,10 +345,7 @@ client.on(Events.InteractionCreate, async interaction => {
             }
             saveData();
             
-            // Nachricht deaktivieren
-            await interaction.message.edit({
-                components: []
-            });
+            await interaction.message.edit({ components: [] });
             
             await interaction.reply({
                 content: isApproved ? '✅ Bewerbung angenommen' : '❌ Bewerbung abgelehnt',
