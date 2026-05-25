@@ -1,9 +1,8 @@
 {
-  "port": 3000,
-  "database": {
-    "host": "localhost",
-    "port": 5432,
-    "name": "myapp"
-  },
-  "apiKey": "your-api-key-here"
+  "prefix": "!",
+  "bewerbungsChannelId": "DEINE_CHANNEL_ID",
+  "logChannelId": "1500566076793032844",
+  "bewerbungsRolle": "1508098614285832332",
+  "maxBewerbungenProTag": 3,
+  "wartenAufBewerbung": 86400000
 }
