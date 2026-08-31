@@ -15,6 +15,17 @@ const config = require('./config.json');
 const fs = require('fs');
 const path = require('path');
 
+// ===== GLOBALER ERROR-HANDLER (NEU) =====
+process.on('unhandledRejection', (error) => {
+    console.error('❌ Unhandled Promise Rejection:', error);
+    // Bot stürzt nicht ab!
+});
+
+process.on('uncaughtException', (error) => {
+    console.error('❌ Uncaught Exception:', error);
+    // Bot stürzt nicht ab!
+});
+
 // Daten speichern
 const dataFilePath = path.join(__dirname, 'applications.json');
 
@@ -168,141 +179,146 @@ function isAdmin(member) {
 }
 
 client.on(Events.InteractionCreate, async interaction => {
-    if (interaction.isChatInputCommand()) {
-        if (interaction.commandName === 'bewerbung') {
-            if (!isAdmin(interaction.member)) {
-                return interaction.reply({ content: '❌ Keine Rechte', ephemeral: true });
+    try {
+        if (interaction.isChatInputCommand()) {
+            if (interaction.commandName === 'bewerbung') {
+                if (!isAdmin(interaction.member)) {
+                    return interaction.reply({ content: '❌ Keine Rechte', ephemeral: true });
+                }
+                await interaction.channel.send({
+                    embeds: [createEmbed()],
+                    components: [createButtons()]
+                });
+                return interaction.reply({ content: '✅ Panel erstellt', ephemeral: true });
             }
-            await interaction.channel.send({
-                embeds: [createEmbed()],
-                components: [createButtons()]
-            });
-            return interaction.reply({ content: '✅ Panel erstellt', ephemeral: true });
+            
+            if (interaction.commandName === 'bewerbungen') {
+                if (!isAdmin(interaction.member)) {
+                    return interaction.reply({ content: '❌ Keine Rechte', ephemeral: true });
+                }
+                
+                if (pendingApplications.size === 0) {
+                    return interaction.reply({ content: '📭 Keine offenen Bewerbungen', ephemeral: true });
+                }
+                
+                let description = '';
+                pendingApplications.forEach((app, id) => {
+                    description += `**${id}** - ${app.role} von ${app.userTag}\n`;
+                });
+                
+                const embed = new EmbedBuilder()
+                    .setTitle('📋 Offene Bewerbungen')
+                    .setDescription(description)
+                    .setColor(0x5865F2);
+                
+                return interaction.reply({ embeds: [embed], ephemeral: true });
+            }
+            
+            if (interaction.commandName === 'bewerbungslog') {
+                if (!isAdmin(interaction.member)) {
+                    return interaction.reply({ content: '❌ Keine Rechte', ephemeral: true });
+                }
+                
+                const allApps = [...applications.pending, ...applications.accepted, ...applications.rejected];
+                
+                if (allApps.length === 0) {
+                    return interaction.reply({ content: '📭 Keine Bewerbungen vorhanden', ephemeral: true });
+                }
+                
+                allApps.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                
+                let pendingList = applications.pending.map(a => `⏳ **${a.id}** - ${a.role} von ${a.userTag}`).join('\n') || 'Keine';
+                let acceptedList = applications.accepted.map(a => `✅ **${a.id}** - ${a.role} von ${a.userTag}`).join('\n') || 'Keine';
+                let rejectedList = applications.rejected.map(a => `❌ **${a.id}** - ${a.role} von ${a.userTag}`).join('\n') || 'Keine';
+                
+                const embed = new EmbedBuilder()
+                    .setTitle('📊 Bewerbungs-Log')
+                    .addFields(
+                        { name: '⏳ Offen', value: pendingList },
+                        { name: '✅ Angenommen', value: acceptedList },
+                        { name: '❌ Abgelehnt', value: rejectedList }
+                    )
+                    .setColor(0x5865F2)
+                    .setTimestamp();
+                
+                return interaction.reply({ embeds: [embed], ephemeral: true });
+            }
         }
         
-        if (interaction.commandName === 'bewerbungen') {
-            if (!isAdmin(interaction.member)) {
-                return interaction.reply({ content: '❌ Keine Rechte', ephemeral: true });
-            }
-            
-            if (pendingApplications.size === 0) {
-                return interaction.reply({ content: '📭 Keine offenen Bewerbungen', ephemeral: true });
-            }
-            
-            let description = '';
-            pendingApplications.forEach((app, id) => {
-                description += `**${id}** - ${app.role} von ${app.userTag}\n`;
-            });
-            
-            const embed = new EmbedBuilder()
-                .setTitle('📋 Offene Bewerbungen')
-                .setDescription(description)
-                .setColor(0x5865F2);
-            
-            return interaction.reply({ embeds: [embed], ephemeral: true });
+        // ===== BEWERBUNGS-BUTTONS =====
+        if (interaction.isButton() && interaction.customId.startsWith('bewerbung_')) {
+            const role = interaction.customId.replace('bewerbung_', '');
+            await interaction.showModal(createModal(role));
+            return; // Wichtig: Hier beenden, damit der nächste Block nicht ausgeführt wird!
         }
         
-        if (interaction.commandName === 'bewerbungslog') {
-            if (!isAdmin(interaction.member)) {
-                return interaction.reply({ content: '❌ Keine Rechte', ephemeral: true });
-            }
+        // ===== MODAL SUBMITS =====
+        if (interaction.isModalSubmit()) {
+            const role = interaction.customId.replace('modal_', '');
+            const age = interaction.fields.getTextInputValue('age');
+            const exp = interaction.fields.getTextInputValue('exp');
+            const why = interaction.fields.getTextInputValue('why');
             
-            const allApps = [...applications.pending, ...applications.accepted, ...applications.rejected];
+            const applicationId = Date.now().toString();
+            const applicationData = {
+                id: applicationId,
+                userId: interaction.user.id,
+                userTag: interaction.user.tag,
+                role: role,
+                age: age,
+                exp: exp,
+                why: why,
+                timestamp: new Date().toISOString()
+            };
             
-            if (allApps.length === 0) {
-                return interaction.reply({ content: '📭 Keine Bewerbungen vorhanden', ephemeral: true });
-            }
+            pendingApplications.set(applicationId, applicationData);
+            applications.pending.push(applicationData);
+            saveData();
             
-            allApps.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+            await sendApplicationLog(interaction, role, {
+                tag: interaction.user.tag,
+                id: interaction.user.id
+            });
             
-            let pendingList = applications.pending.map(a => `⏳ **${a.id}** - ${a.role} von ${a.userTag}`).join('\n') || 'Keine';
-            let acceptedList = applications.accepted.map(a => `✅ **${a.id}** - ${a.role} von ${a.userTag}`).join('\n') || 'Keine';
-            let rejectedList = applications.rejected.map(a => `❌ **${a.id}** - ${a.role} von ${a.userTag}`).join('\n') || 'Keine';
-            
+            const logChannel = interaction.guild.channels.cache.get(config.logChannelId);
             const embed = new EmbedBuilder()
-                .setTitle('📊 Bewerbungs-Log')
+                .setTitle(`📝 Neue ${role} Bewerbung`)
                 .addFields(
-                    { name: '⏳ Offen', value: pendingList },
-                    { name: '✅ Angenommen', value: acceptedList },
-                    { name: '❌ Abgelehnt', value: rejectedList }
+                    { name: '👤 User', value: interaction.user.tag },
+                    { name: '🎫 ID', value: applicationId },
+                    { name: '📅 Alter', value: age },
+                    { name: '💼 Erfahrung', value: exp },
+                    { name: '🎯 Motivation', value: why }
                 )
                 .setColor(0x5865F2)
                 .setTimestamp();
             
-            return interaction.reply({ embeds: [embed], ephemeral: true });
-        }
-    }
-    
-    if (interaction.isButton() && interaction.customId.startsWith('bewerbung_')) {
-        const role = interaction.customId.replace('bewerbung_', '');
-        await interaction.showModal(createModal(role));
-    }
-    
-    if (interaction.isModalSubmit()) {
-        const role = interaction.customId.replace('modal_', '');
-        const age = interaction.fields.getTextInputValue('age');
-        const exp = interaction.fields.getTextInputValue('exp');
-        const why = interaction.fields.getTextInputValue('why');
-        
-        const applicationId = Date.now().toString();
-        const applicationData = {
-            id: applicationId,
-            userId: interaction.user.id,
-            userTag: interaction.user.tag,
-            role: role,
-            age: age,
-            exp: exp,
-            why: why,
-            timestamp: new Date().toISOString()
-        };
-        
-        pendingApplications.set(applicationId, applicationData);
-        applications.pending.push(applicationData);
-        saveData();
-        
-        await sendApplicationLog(interaction, role, {
-            tag: interaction.user.tag,
-            id: interaction.user.id
-        });
-        
-        const logChannel = interaction.guild.channels.cache.get(config.logChannelId);
-        const embed = new EmbedBuilder()
-            .setTitle(`📝 Neue ${role} Bewerbung`)
-            .addFields(
-                { name: '👤 User', value: interaction.user.tag },
-                { name: '🎫 ID', value: applicationId },
-                { name: '📅 Alter', value: age },
-                { name: '💼 Erfahrung', value: exp },
-                { name: '🎯 Motivation', value: why }
-            )
-            .setColor(0x5865F2)
-            .setTimestamp();
-        
-        if (logChannel) {
-            const msg = await logChannel.send({
-                embeds: [embed],
-                components: [
-                    new ActionRowBuilder()
-                        .addComponents(
-                            new ButtonBuilder()
-                                .setCustomId(`approve_${applicationId}`)
-                                .setLabel('✅ Annehmen')
-                                .setStyle(ButtonStyle.Success),
-                            new ButtonBuilder()
-                                .setCustomId(`reject_${applicationId}`)
-                                .setLabel('❌ Ablehnen')
-                                .setStyle(ButtonStyle.Danger)
-                        )
-                ]
-            });
-            applicationData.messageId = msg.id;
+            if (logChannel) {
+                const msg = await logChannel.send({
+                    embeds: [embed],
+                    components: [
+                        new ActionRowBuilder()
+                            .addComponents(
+                                new ButtonBuilder()
+                                    .setCustomId(`approve_${applicationId}`)
+                                    .setLabel('✅ Annehmen')
+                                    .setStyle(ButtonStyle.Success),
+                                new ButtonBuilder()
+                                    .setCustomId(`reject_${applicationId}`)
+                                    .setLabel('❌ Ablehnen')
+                                    .setStyle(ButtonStyle.Danger)
+                            )
+                    ]
+                });
+                applicationData.messageId = msg.id;
+            }
+            
+            await interaction.reply({ content: '✅ Bewerbung gesendet!', ephemeral: true });
+            return;
         }
         
-        await interaction.reply({ content: '✅ Bewerbung gesendet!', ephemeral: true });
-    }
-    
-    if (interaction.isButton()) {
-        if (interaction.customId.startsWith('approve_') || interaction.customId.startsWith('reject_')) {
+        // ===== APPROVE / REJECT BUTTONS =====
+        if (interaction.isButton() && (interaction.customId.startsWith('approve_') || interaction.customId.startsWith('reject_'))) {
             if (!isAdmin(interaction.member)) {
                 return interaction.reply({ content: '❌ Keine Rechte', ephemeral: true });
             }
@@ -325,7 +341,12 @@ client.on(Events.InteractionCreate, async interaction => {
                     )
                     .setColor(isApproved ? 0x00FF00 : 0xFF0000)
                     .setTimestamp();
-                await user.send({ embeds: [resultEmbed] });
+                
+                try {
+                    await user.send({ embeds: [resultEmbed] });
+                } catch (err) {
+                    console.log(`⚠️ Konnte User ${application.userTag} nicht per DM erreichen.`);
+                }
             }
             
             await sendAdminLog(
@@ -345,12 +366,30 @@ client.on(Events.InteractionCreate, async interaction => {
             }
             saveData();
             
-            await interaction.message.edit({ components: [] });
+            // 🔥 FIX: Prüfen ob message existiert
+            if (interaction.message) {
+                await interaction.message.edit({ components: [] });
+            }
             
             await interaction.reply({
                 content: isApproved ? '✅ Bewerbung angenommen' : '❌ Bewerbung abgelehnt',
                 ephemeral: true
             });
+            return;
+        }
+        
+    } catch (error) {
+        // ===== ALLE FEHLER ABFANGEN =====
+        console.error('❌ Fehler in Interaction:', error);
+        try {
+            if (!interaction.replied && !interaction.deferred) {
+                await interaction.reply({ 
+                    content: '⚠️ Ein Fehler ist aufgetreten. Bitte versuche es später erneut.', 
+                    ephemeral: true 
+                });
+            }
+        } catch (replyError) {
+            console.error('Konnte keine Fehlerantwort senden:', replyError);
         }
     }
 });
