@@ -95,10 +95,40 @@ client.once(Events.ClientReady, async () => {
                 name: 'bewerbungslog',
                 description: 'Zeige Bewerbungs-Log (Admin)'
             });
+            await guild.commands.create({
+                name: 'ping',
+                description: 'Zeigt die Latenz des Bots'
+            });
             console.log('✅ Slash Commands registriert');
         } catch (err) {
             console.error('❌ Fehler beim Registrieren der Commands:', err);
         }
+    }
+});
+
+// ===== PREFIX COMMANDS (!ping) =====
+client.on(Events.MessageCreate, async message => {
+    if (message.author.bot) return;
+    if (!message.guild) return;
+
+    const prefix = config.prefix || '!';
+    if (!message.content.startsWith(prefix)) return;
+
+    const args = message.content.slice(prefix.length).trim().split(/\s+/);
+    const command = args.shift().toLowerCase();
+
+    if (command === 'ping') {
+        const sent = await message.reply('🏓 Pinge...');
+        const latency = sent.createdTimestamp - message.createdTimestamp;
+        const wsLatency = client.ws.ping;
+
+        const uptime = process.uptime();
+        const days = Math.floor(uptime / 86400);
+        const hours = Math.floor((uptime % 86400) / 3600);
+        const minutes = Math.floor((uptime % 3600) / 60);
+        const seconds = Math.floor(uptime % 60);
+
+        await sent.edit(`🏓 **Pong!**\n📡 Bot-Latenz: \`${latency}ms\`\n💓 WebSocket: \`${wsLatency}ms\`\n⏱️ Uptime: \`${days}d ${hours}h ${minutes}m ${seconds}s\``);
     }
 });
 
@@ -274,6 +304,25 @@ client.on(Events.InteractionCreate, async interaction => {
                     .setTimestamp();
 
                 return interaction.reply({ embeds: [embed], ephemeral: true });
+            }
+
+            // ===== PING (SLASH) =====
+            if (interaction.commandName === 'ping') {
+                const sent = Date.now();
+                await interaction.reply({ content: '🏓 Pinge...' });
+                const latency = Date.now() - sent;
+                const wsLatency = client.ws.ping;
+
+                const uptime = process.uptime();
+                const days = Math.floor(uptime / 86400);
+                const hours = Math.floor((uptime % 86400) / 3600);
+                const minutes = Math.floor((uptime % 3600) / 60);
+                const seconds = Math.floor(uptime % 60);
+
+                await interaction.editReply({
+                    content: `🏓 **Pong!**\n📡 Bot-Latenz: \`${latency}ms\`\n💓 WebSocket: \`${wsLatency}ms\`\n⏱️ Uptime: \`${days}d ${hours}h ${minutes}m ${seconds}s\``
+                });
+                return;
             }
         }
 
