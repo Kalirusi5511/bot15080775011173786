@@ -131,7 +131,7 @@ async function sendApplicationLog(interaction, role, userInfo) {
 function createEmbed() {
     return new EmbedBuilder()
         .setTitle('🎓 Bewerbungs System')
-        .setDescription('Willkommen zum Bewerbungs-System.\n🛡️ Supporter\n🛡️ Moderator\n👑 Admin\nKlicke auf einen Button.')
+        .setDescription('Willkommen zum Bewerbungs-System.\n🛡️ Supporter\n🛡️ Moderator\n👨‍💻 Entwickler\nKlicke auf einen Button.')
         .setColor(0x5865F2)
         .setTimestamp();
 }
@@ -148,16 +148,28 @@ function createButtons() {
                 .setLabel('🛡️ Moderator')
                 .setStyle(ButtonStyle.Primary),
             new ButtonBuilder()
-                .setCustomId('bewerbung_admin')
-                .setLabel('👑 Admin')
+                .setCustomId('bewerbung_entwickler')
+                .setLabel('👨‍💻 Entwickler')
                 .setStyle(ButtonStyle.Danger)
         );
 }
 
+// Rollen-Namen mit Großbuchstaben für schöne Anzeige
+function formatRole(role) {
+    const map = {
+        'supporter': 'Supporter',
+        'moderator': 'Moderator',
+        'entwickler': 'Entwickler',
+        'admin': 'Admin'
+    };
+    return map[role] || role.charAt(0).toUpperCase() + role.slice(1);
+}
+
 function createModal(role) {
+    const roleName = formatRole(role);
     const modal = new ModalBuilder()
         .setCustomId(`modal_${role}`)
-        .setTitle(`${role} Bewerbung`);
+        .setTitle(`${roleName} Bewerbung`);
 
     const age = new TextInputBuilder()
         .setCustomId('age')
@@ -271,6 +283,7 @@ client.on(Events.InteractionCreate, async interaction => {
         // ===== MODAL SUBMITS =====
         if (interaction.isModalSubmit()) {
             const role = interaction.customId.replace('modal_', '');
+            const roleName = formatRole(role);
             const age = interaction.fields.getTextInputValue('age');
             const exp = interaction.fields.getTextInputValue('exp');
             const why = interaction.fields.getTextInputValue('why');
@@ -280,7 +293,7 @@ client.on(Events.InteractionCreate, async interaction => {
                 id: applicationId,
                 userId: interaction.user.id,
                 userTag: interaction.user.tag,
-                role: role,
+                role: roleName,
                 age: age,
                 exp: exp,
                 why: why,
@@ -291,14 +304,14 @@ client.on(Events.InteractionCreate, async interaction => {
             applications.pending.push(applicationData);
             saveData();
 
-            await sendApplicationLog(interaction, role, {
+            await sendApplicationLog(interaction, roleName, {
                 tag: interaction.user.tag,
                 id: interaction.user.id
             });
 
             const logChannel = interaction.guild.channels.cache.get(config.logChannelId);
             const embed = new EmbedBuilder()
-                .setTitle(`📝 Neue ${role} Bewerbung`)
+                .setTitle(`📝 Neue ${roleName} Bewerbung`)
                 .addFields(
                     { name: '👤 User', value: interaction.user.tag },
                     { name: '🎫 ID', value: applicationId },
