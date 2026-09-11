@@ -131,7 +131,7 @@ async function sendApplicationLog(interaction, role, userInfo) {
 function createEmbed() {
     return new EmbedBuilder()
         .setTitle('🎓 Bewerbungs System')
-        .setDescription('Willkommen zum Bewerbungs-System.\n🛡️ Supporter\n🛡️ Moderator\n👨‍💻 Entwickler\nKlicke auf einen Button.')
+        .setDescription('Willkommen zum Bewerbungs-System.\n🛡️ Supporter\n🛡️ Moderator\n👨‍💻 Entwickler\n👑 Admin\nKlicke auf einen Button.')
         .setColor(0x5865F2)
         .setTimestamp();
 }
@@ -150,6 +150,10 @@ function createButtons() {
             new ButtonBuilder()
                 .setCustomId('bewerbung_entwickler')
                 .setLabel('👨‍💻 Entwickler')
+                .setStyle(ButtonStyle.Success),
+            new ButtonBuilder()
+                .setCustomId('bewerbung_admin')
+                .setLabel('👑 Admin')
                 .setStyle(ButtonStyle.Danger)
         );
 }
