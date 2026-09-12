@@ -10,7 +10,8 @@ const {
     ModalBuilder,
     TextInputBuilder,
     TextInputStyle,
-    Events
+    Events,
+    ActivityType
 } = require('discord.js');
 const config = require('./config.json');
 const fs = require('fs');
@@ -34,8 +35,43 @@ process.on('uncaughtException', (error) => {
 });
 
 // ===== KONFIG-WERTE =====
-const OWNER_ID = '1358450873646321696'; // Kay Lehnet55
+const OWNER_ID = '926178878882467930'; // KochSalzChemiker – HIER deine aktuelle ID eintragen!
 const LOG_CHANNEL_ID = config.adminLogChannelId || config.logChannelId;
+
+// ===== PERSISTENTE LISTEN =====
+const DATA_FILE = path.join(__dirname, 'lists.json');
+
+let lists = {
+    whitelist: [],           // User-IDs, die /bot disconnect nutzen dürfen
+    botCommandBlocked: [],   // User-IDs, die /bot nicht sehen dürfen
+    botIgnored: []           // User-IDs, die der Bot komplett ignoriert
+};
+
+function loadLists() {
+    try {
+        if (fs.existsSync(DATA_FILE)) {
+            const data = fs.readFileSync(DATA_FILE, 'utf8');
+            const parsed = JSON.parse(data);
+            lists = {
+                whitelist: parsed.whitelist || [],
+                botCommandBlocked: parsed.botCommandBlocked || [],
+                botIgnored: parsed.botIgnored || []
+            };
+        }
+    } catch (err) {
+        console.error('Fehler beim Laden der Listen:', err);
+    }
+}
+
+function saveLists() {
+    try {
+        fs.writeFileSync(DATA_FILE, JSON.stringify(lists, null, 2));
+    } catch (err) {
+        console.error('Fehler beim Speichern der Listen:', err);
+    }
+}
+
+loadLists();
 
 // ===== DATEN SPEICHERN =====
 const dataFilePath = path.join(__dirname, 'applications.json');
@@ -72,6 +108,45 @@ applications.pending.forEach(app => {
     pendingApplications.set(app.id, app);
 });
 
+// ===== HILFSFUNKTIONEN =====
+function hasBotAccess(userId) {
+    if (userId === OWNER_ID) return true;
+    if (lists.whitelist.includes(userId)) return true;
+    return false;
+}
+
+function isBlocked(userId) {
+    return lists.botCommandBlocked.includes(userId);
+}
+
+// Command-Permissions für /bot aktualisieren
+async function updateBotCommandPermissions(guild) {
+    try {
+        const commands = await guild.commands.fetch();
+        const botCmd = commands.find(c => c.name === 'bot');
+        if (!botCmd) return;
+
+        const permissions = [
+            { id: OWNER_ID, type: 2, permission: true }
+        ];
+
+        // Whitelist-User bekommen Zugriff
+        for (const id of lists.whitelist) {
+            permissions.push({ id, type: 2, permission: true });
+        }
+
+        // Blocklist-User explizit verbieten
+        for (const id of lists.botCommandBlocked) {
+            permissions.push({ id, type: 2, permission: false });
+        }
+
+        await botCmd.permissions.set({ permissions });
+        console.log('🔒 /bot Permissions aktualisiert');
+    } catch (err) {
+        console.error('⚠️ Konnte Permissions nicht setzen:', err.message);
+    }
+}
+
 // ===== CLIENT =====
 const client = new Client({
     intents: [
@@ -103,17 +178,106 @@ client.once(Events.ClientReady, async () => {
                 name: 'ping',
                 description: 'Zeigt Latenz, RAM und System-Info in Echtzeit'
             });
+
+            // /bot Command
             await guild.commands.create({
                 name: 'bot',
-                description: 'Bot-Verwaltung (Owner only)',
+                description: 'Bot-Verwaltung',
                 options: [
                     {
                         name: 'disconnect',
                         description: 'Trennt den Bot vom Server (Test)',
-                        type: 1 // SUB_COMMAND
+                        type: 1
+                    },
+                    {
+                        name: 'status',
+                        description: 'Ändert den Bot-Status (Owner only)',
+                        type: 1,
+                        options: [
+                            {
+                                name: 'typ',
+                                description: 'Status-Typ',
+                                type: 3,
+                                required: true,
+                                choices: [
+                                    { name: '🟢 Online', value: 'online' },
+                                    { name: '🟡 Abwesend', value: 'idle' },
+                                    { name: '🔴 Bitte nicht stören', value: 'dnd' },
+                                    { name: '⚫ Unsichtbar', value: 'invisible' }
+                                ]
+                            },
+                            {
+                                name: 'text',
+                                description: 'Status-Text (optional)',
+                                type: 3,
+                                required: false
+                            }
+                        ]
+                    },
+                    {
+                        name: 'whitelist',
+                        description: 'Verwaltet die Whitelist für /bot disconnect (Owner only)',
+                        type: 1,
+                        options: [
+                            {
+                                name: 'aktion',
+                                description: 'Aktion',
+                                type: 3,
+                                required: true,
+                                choices: [
+                                    { name: '➕ Hinzufügen', value: 'add' },
+                                    { name: '➖ Entfernen', value: 'remove' },
+                                    { name: '📋 Anzeigen', value: 'list' }
+                                ]
+                            },
+                            {
+                                name: 'user',
+                                description: 'User (Mention oder ID)',
+                                type: 6, // USER
+                                required: false
+                            }
+                        ]
+                    },
+                    {
+                        name: 'blocklist',
+                        description: 'Verwaltet die Blocklist (Owner only)',
+                        type: 1,
+                        options: [
+                            {
+                                name: 'aktion',
+                                description: 'Aktion',
+                                type: 3,
+                                required: true,
+                                choices: [
+                                    { name: '➕ Hinzufügen', value: 'add' },
+                                    { name: '➖ Entfernen', value: 'remove' },
+                                    { name: '📋 Anzeigen', value: 'list' }
+                                ]
+                            },
+                            {
+                                name: 'user',
+                                description: 'User (Mention oder ID)',
+                                type: 6,
+                                required: false
+                            },
+                            {
+                                name: 'typ',
+                                description: 'Welche Liste?',
+                                type: 3,
+                                required: false,
+                                choices: [
+                                    { name: 'Bot-Command verbergen', value: 'botCommandBlocked' },
+                                    { name: 'Bot ignoriert User', value: 'botIgnored' }
+                                ]
+                            }
+                        ]
                     }
                 ]
             });
+
+            // Permissions direkt nach Erstellung setzen
+            await updateBotCommandPermissions(guild);
+
             console.log('✅ Slash Commands registriert');
         } catch (err) {
             console.error('❌ Fehler beim Registrieren der Commands:', err);
@@ -122,7 +286,7 @@ client.once(Events.ClientReady, async () => {
 });
 
 // ===================================================================
-// ===== LOGGING-SYSTEM MIT AUDIT-LOG (Wer war's?) ===================
+// ===== LOGGING-SYSTEM MIT AUDIT-LOG ================================
 // ===================================================================
 
 async function getExecutor(guild, actionType, targetId, maxAgeMs = 10000) {
@@ -157,9 +321,7 @@ async function sendLog(guild, embed, critical = false) {
 // ---- 1. NACHRICHT GELÖSCHT ----
 client.on(Events.MessageDelete, async message => {
     if (!message.guild || message.author?.bot) return;
-
     const { executor } = await getExecutor(message.guild, 72, message.author.id);
-
     const embed = new EmbedBuilder()
         .setTitle('🗑️ Nachricht gelöscht')
         .addFields(
@@ -177,7 +339,6 @@ client.on(Events.MessageDelete, async message => {
 client.on(Events.MessageUpdate, async (oldMessage, newMessage) => {
     if (!newMessage.guild || newMessage.author?.bot) return;
     if (oldMessage.content === newMessage.content) return;
-
     const embed = new EmbedBuilder()
         .setTitle('✏️ Nachricht bearbeitet')
         .addFields(
@@ -191,10 +352,9 @@ client.on(Events.MessageUpdate, async (oldMessage, newMessage) => {
     sendLog(newMessage.guild, embed);
 });
 
-// ---- 3. MITGLIED GEKICKT / VERLASSEN ----
+// ---- 3. MITGLIED ENTFERNT ----
 client.on(Events.GuildMemberRemove, async member => {
     const { executor, reason } = await getExecutor(member.guild, 20, member.user.id);
-
     const isBot = member.user.bot;
     const embed = new EmbedBuilder()
         .setTitle(isBot ? '🚨 BOT ENTFERNT' : '🚪 Mitglied entfernt')
@@ -224,7 +384,6 @@ client.on(Events.GuildMemberAdd, async member => {
         sendLog(member.guild, embed, true);
         return;
     }
-
     const embed = new EmbedBuilder()
         .setTitle('📥 Mitglied beigetreten')
         .setDescription(`${member.user.tag} (${member.user.id})`)
@@ -357,6 +516,7 @@ client.on(Events.GuildBanRemove, async ban => {
 client.on(Events.MessageCreate, async message => {
     if (message.author.bot) return;
     if (!message.guild) return;
+    if (lists.botIgnored.includes(message.author.id)) return;
 
     const prefix = config.prefix || '!';
     if (!message.content.startsWith(prefix)) return;
@@ -402,7 +562,7 @@ client.on(Events.MessageCreate, async message => {
     }
 });
 
-// ===== HELPER (BEWERBUNG) =====
+// ===== HELPER =====
 async function sendAdminLog(interaction, action, details, color = '#00FF00') {
     const logChannel = interaction.guild.channels.cache.get(config.adminLogChannelId);
     if (logChannel) {
@@ -416,7 +576,6 @@ async function sendAdminLog(interaction, action, details, color = '#00FF00') {
             .setTimestamp();
         await logChannel.send({ embeds: [embed] });
     }
-
     const logEntry = `[${new Date().toISOString()}] ${action} by ${interaction.user.tag}: ${details}\n`;
     const logFilePath = path.join(__dirname, 'admin_logs.txt');
     fs.appendFileSync(logFilePath, logEntry);
@@ -511,7 +670,18 @@ function isAdmin(member) {
 // ===== INTERACTIONS =====
 client.on(Events.InteractionCreate, async interaction => {
     try {
+        // Silent ignore
+        if (lists.botIgnored.includes(interaction.user.id)) return;
+
         if (interaction.isChatInputCommand()) {
+            // Blocklist-Check
+            if (interaction.commandName === 'bot' && isBlocked(interaction.user.id)) {
+                return interaction.reply({
+                    content: '❌ Du hast keine Berechtigung für diesen Befehl.',
+                    ephemeral: true
+                });
+            }
+
             // ===== /bewerbung =====
             if (interaction.commandName === 'bewerbung') {
                 if (!isAdmin(interaction.member)) {
@@ -529,21 +699,17 @@ client.on(Events.InteractionCreate, async interaction => {
                 if (!isAdmin(interaction.member)) {
                     return interaction.reply({ content: '❌ Keine Rechte', ephemeral: true });
                 }
-
                 if (pendingApplications.size === 0) {
                     return interaction.reply({ content: '📭 Keine offenen Bewerbungen', ephemeral: true });
                 }
-
                 let description = '';
                 pendingApplications.forEach((app, id) => {
                     description += `**${id}** - ${app.role} von ${app.userTag}\n`;
                 });
-
                 const embed = new EmbedBuilder()
                     .setTitle('📋 Offene Bewerbungen')
                     .setDescription(description)
                     .setColor(0x5865F2);
-
                 return interaction.reply({ embeds: [embed], ephemeral: true });
             }
 
@@ -552,19 +718,14 @@ client.on(Events.InteractionCreate, async interaction => {
                 if (!isAdmin(interaction.member)) {
                     return interaction.reply({ content: '❌ Keine Rechte', ephemeral: true });
                 }
-
                 const allApps = [...applications.pending, ...applications.accepted, ...applications.rejected];
-
                 if (allApps.length === 0) {
                     return interaction.reply({ content: '📭 Keine Bewerbungen vorhanden', ephemeral: true });
                 }
-
                 allApps.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-
                 let pendingList = applications.pending.map(a => `⏳ **${a.id}** - ${a.role} von ${a.userTag}`).join('\n') || 'Keine';
                 let acceptedList = applications.accepted.map(a => `✅ **${a.id}** - ${a.role} von ${a.userTag}`).join('\n') || 'Keine';
                 let rejectedList = applications.rejected.map(a => `❌ **${a.id}** - ${a.role} von ${a.userTag}`).join('\n') || 'Keine';
-
                 const embed = new EmbedBuilder()
                     .setTitle('📊 Bewerbungs-Log')
                     .addFields(
@@ -574,7 +735,6 @@ client.on(Events.InteractionCreate, async interaction => {
                     )
                     .setColor(0x5865F2)
                     .setTimestamp();
-
                 return interaction.reply({ embeds: [embed], ephemeral: true });
             }
 
@@ -604,23 +764,9 @@ client.on(Events.InteractionCreate, async interaction => {
                 const external = toMB(mem.external);
                 const heapPercent = ((mem.heapUsed / mem.heapTotal) * 100).toFixed(1);
 
-                const nodeVersion = process.version;
-                const platform = process.platform;
-                const arch = process.arch;
-
-                const region =
-                    process.env.RENDER_REGION ||
-                    process.env.RENDER_SERVICE_REGION ||
-                    'Frankfurt (EU)';
-
-                const serviceName =
-                    process.env.RENDER_SERVICE_NAME ||
-                    process.env.RENDER_EXTERNAL_HOSTNAME?.split('.')[0] ||
-                    'unbekannt';
-
-                const instanceType =
-                    process.env.RENDER_INSTANCE_TYPE ||
-                    (process.env.RENDER ? 'Render' : 'lokal');
+                const region = process.env.RENDER_REGION || process.env.RENDER_SERVICE_REGION || 'Frankfurt (EU)';
+                const serviceName = process.env.RENDER_SERVICE_NAME || process.env.RENDER_EXTERNAL_HOSTNAME?.split('.')[0] || 'unbekannt';
+                const instanceType = process.env.RENDER_INSTANCE_TYPE || (process.env.RENDER ? 'Render' : 'lokal');
 
                 const color = wsLatency < 60 ? 0x00FF00 : wsLatency < 120 ? 0xFFFF00 : 0xFF0000;
                 const status = wsLatency < 60 ? '🟢 Exzellent' : wsLatency < 120 ? '🟡 Gut' : '🔴 Hoch';
@@ -631,10 +777,7 @@ client.on(Events.InteractionCreate, async interaction => {
                     .addFields(
                         {
                             name: '📡 Latenz',
-                            value:
-                                `💓 WebSocket: \`${wsLatency}ms\`\n` +
-                                `🌐 API: \`${apiLatency}ms\`\n` +
-                                `🔗 Shard: \`${shardLatency}ms\``,
+                            value: `💓 WebSocket: \`${wsLatency}ms\`\n🌐 API: \`${apiLatency}ms\`\n🔗 Shard: \`${shardLatency}ms\``,
                             inline: true
                         },
                         {
@@ -644,20 +787,12 @@ client.on(Events.InteractionCreate, async interaction => {
                         },
                         {
                             name: '💾 RAM-Nutzung',
-                            value:
-                                `📦 Heap: \`${heapUsed} / ${heapTotal} MB\` (${heapPercent}%)\n` +
-                                `🧠 RSS: \`${rss} MB\`\n` +
-                                `🔌 External: \`${external} MB\``,
+                            value: `📦 Heap: \`${heapUsed} / ${heapTotal} MB\` (${heapPercent}%)\n🧠 RSS: \`${rss} MB\`\n🔌 External: \`${external} MB\``,
                             inline: false
                         },
                         {
                             name: '⚙️ System',
-                            value:
-                                `🟢 Node: \`${nodeVersion}\`\n` +
-                                `🖥️ Platform: \`${platform} ${arch}\`\n` +
-                                `📍 Region: \`${region}\`\n` +
-                                `🏷️ Service: \`${serviceName}\`\n` +
-                                `💠 Instance: \`${instanceType}\``,
+                            value: `🟢 Node: \`${process.version}\`\n🖥️ Platform: \`${process.platform} ${process.arch}\`\n📍 Region: \`${region}\`\n🏷️ Service: \`${serviceName}\`\n💠 Instance: \`${instanceType}\``,
                             inline: false
                         }
                     )
@@ -667,26 +802,25 @@ client.on(Events.InteractionCreate, async interaction => {
                 return interaction.reply({ embeds: [embed] });
             }
 
-            // ===== /bot disconnect (OWNER ONLY) =====
+            // ===== /bot =====
             if (interaction.commandName === 'bot') {
                 const subcommand = interaction.options.getSubcommand();
 
+                // ---- /bot disconnect ----
                 if (subcommand === 'disconnect') {
-                    // NUR DU darfst das
-                    if (interaction.user.id !== OWNER_ID) {
+                    // Whitelist-Check
+                    if (!hasBotAccess(interaction.user.id)) {
                         return interaction.reply({
-                            content: '❌ Nur der Bot-Owner darf diesen Befehl nutzen.',
+                            content: '❌ Du hast keine Berechtigung für diesen Befehl. Frag den Bot-Owner.',
                             ephemeral: true
                         });
                     }
 
-                    // Bestätigen
                     await interaction.reply({
                         content: '⚠️ **Bot trennt sich in 3 Sekunden vom Server...**\nDer Log-Eintrag wird vorher gesendet.',
                         ephemeral: true
                     });
 
-                    // Log-Eintrag VOR dem Disconnect
                     const logChannel = interaction.guild.channels.cache.get(LOG_CHANNEL_ID);
                     if (logChannel) {
                         const embed = new EmbedBuilder()
@@ -701,7 +835,6 @@ client.on(Events.InteractionCreate, async interaction => {
                         await logChannel.send({ embeds: [embed] }).catch(() => {});
                     }
 
-                    // 3 Sekunden warten, dann trennen
                     setTimeout(async () => {
                         try {
                             console.log(`⚠️ Bot verlässt Guild "${interaction.guild.name}" auf Wunsch von ${interaction.user.tag}`);
@@ -712,6 +845,202 @@ client.on(Events.InteractionCreate, async interaction => {
                         }
                     }, 3000);
                     return;
+                }
+
+                // ---- /bot status (NUR OWNER) ----
+                if (subcommand === 'status') {
+                    if (interaction.user.id !== OWNER_ID) {
+                        return interaction.reply({
+                            content: '❌ Nur der Bot-Owner darf den Status ändern.',
+                            ephemeral: true
+                        });
+                    }
+
+                    const type = interaction.options.getString('typ');
+                    const text = interaction.options.getString('text') || null;
+
+                    client.user.setStatus(type);
+                    if (text) {
+                        client.user.setActivity(text, { type: ActivityType.Custom });
+                    }
+
+                    return interaction.reply({
+                        content: `✅ Bot-Status geändert zu **${type}**${text ? ` mit Text: "${text}"` : ''}`,
+                        ephemeral: true
+                    });
+                }
+
+                // ---- /bot whitelist (NUR OWNER) ----
+                if (subcommand === 'whitelist') {
+                    if (interaction.user.id !== OWNER_ID) {
+                        return interaction.reply({
+                            content: '❌ Nur der Bot-Owner darf die Whitelist verwalten.',
+                            ephemeral: true
+                        });
+                    }
+
+                    const aktion = interaction.options.getString('aktion');
+                    const user = interaction.options.getUser('user');
+
+                    // list
+                    if (aktion === 'list') {
+                        const ownerMention = `<@${OWNER_ID}> (\`${OWNER_ID}\`) – Owner`;
+                        const whitelistMentions = lists.whitelist.length > 0
+                            ? lists.whitelist.map(id => `<@${id}> (\`${id}\`)`).join('\n')
+                            : '*niemand*';
+
+                        const embed = new EmbedBuilder()
+                            .setTitle('📋 Whitelist – /bot disconnect')
+                            .addFields(
+                                { name: '👑 Owner (immer)', value: ownerMention },
+                                { name: '✅ Whitelist', value: whitelistMentions }
+                            )
+                            .setColor(0x00FF00)
+                            .setTimestamp();
+
+                        return interaction.reply({ embeds: [embed], ephemeral: true });
+                    }
+
+                    if (!user) {
+                        return interaction.reply({
+                            content: '❌ Du musst einen User angeben.',
+                            ephemeral: true
+                        });
+                    }
+
+                    // add
+                    if (aktion === 'add') {
+                        if (user.id === OWNER_ID) {
+                            return interaction.reply({
+                                content: '⚠️ Der Owner ist immer berechtigt.',
+                                ephemeral: true
+                            });
+                        }
+
+                        if (!lists.whitelist.includes(user.id)) {
+                            lists.whitelist.push(user.id);
+                            saveLists();
+                            await updateBotCommandPermissions(interaction.guild);
+
+                            return interaction.reply({
+                                content: `✅ **${user.tag}** wurde zur Whitelist hinzugefügt. Er kann jetzt \`/bot disconnect\` nutzen.`,
+                                ephemeral: true
+                            });
+                        } else {
+                            return interaction.reply({
+                                content: `⚠️ **${user.tag}** ist bereits in der Whitelist.`,
+                                ephemeral: true
+                            });
+                        }
+                    }
+
+                    // remove
+                    if (aktion === 'remove') {
+                        if (lists.whitelist.includes(user.id)) {
+                            lists.whitelist = lists.whitelist.filter(id => id !== user.id);
+                            saveLists();
+                            await updateBotCommandPermissions(interaction.guild);
+
+                            return interaction.reply({
+                                content: `✅ **${user.tag}** wurde von der Whitelist entfernt.`,
+                                ephemeral: true
+                            });
+                        } else {
+                            return interaction.reply({
+                                content: `⚠️ **${user.tag}** ist nicht in der Whitelist.`,
+                                ephemeral: true
+                            });
+                        }
+                    }
+                }
+
+                // ---- /bot blocklist (NUR OWNER) ----
+                if (subcommand === 'blocklist') {
+                    if (interaction.user.id !== OWNER_ID) {
+                        return interaction.reply({
+                            content: '❌ Nur der Bot-Owner darf die Blocklist verwalten.',
+                            ephemeral: true
+                        });
+                    }
+
+                    const aktion = interaction.options.getString('aktion');
+                    const user = interaction.options.getUser('user');
+                    const typ = interaction.options.getString('typ') || 'botCommandBlocked';
+
+                    // list
+                    if (aktion === 'list') {
+                        const blockedList = lists.botCommandBlocked.length > 0
+                            ? lists.botCommandBlocked.map(id => `<@${id}> (\`${id}\`)`).join('\n')
+                            : '*leer*';
+                        const ignoredList = lists.botIgnored.length > 0
+                            ? lists.botIgnored.map(id => `<@${id}> (\`${id}\`)`).join('\n')
+                            : '*leer*';
+
+                        const embed = new EmbedBuilder()
+                            .setTitle('📋 Blocklist-Übersicht')
+                            .addFields(
+                                { name: '🚫 /bot verborgen für', value: blockedList },
+                                { name: '🙈 Bot ignoriert', value: ignoredList }
+                            )
+                            .setColor(0x5865F2)
+                            .setTimestamp();
+
+                        return interaction.reply({ embeds: [embed], ephemeral: true });
+                    }
+
+                    if (!user) {
+                        return interaction.reply({
+                            content: '❌ Du musst einen User angeben.',
+                            ephemeral: true
+                        });
+                    }
+
+                    if (user.id === OWNER_ID) {
+                        return interaction.reply({
+                            content: '❌ Du kannst dich nicht selbst blockieren.',
+                            ephemeral: true
+                        });
+                    }
+
+                    // add
+                    if (aktion === 'add') {
+                        if (!lists[typ].includes(user.id)) {
+                            lists[typ].push(user.id);
+                            saveLists();
+                            if (typ === 'botCommandBlocked') {
+                                await updateBotCommandPermissions(interaction.guild);
+                            }
+                            return interaction.reply({
+                                content: `✅ **${user.tag}** wurde zur Liste **${typ}** hinzugefügt.`,
+                                ephemeral: true
+                            });
+                        } else {
+                            return interaction.reply({
+                                content: `⚠️ **${user.tag}** ist bereits in der Liste **${typ}**.`,
+                                ephemeral: true
+                            });
+                        }
+                    }
+
+                    // remove
+                    if (aktion === 'remove') {
+                        if (lists[typ].includes(user.id)) {
+                            lists[typ] = lists[typ].filter(id => id !== user.id);
+                            saveLists();
+                            if (typ === 'botCommandBlocked') {
+                                await updateBotCommandPermissions(interaction.guild);
+                            }
+                            return interaction.reply({
+                                content: `✅ **${user.tag}** wurde aus der Liste **${typ}** entfernt.`,
+                                ephemeral: true
+                            });
+                        } else {
+                            return interaction.reply({
+                                content: `⚠️ **${user.tag}** ist nicht in der Liste **${typ}**.`,
+                                ephemeral: true
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -789,7 +1118,7 @@ client.on(Events.InteractionCreate, async interaction => {
             return;
         }
 
-        // ===== APPROVE / REJECT BUTTONS =====
+        // ===== APPROVE / REJECT =====
         if (interaction.isButton() && (interaction.customId.startsWith('approve_') || interaction.customId.startsWith('reject_'))) {
             if (!isAdmin(interaction.member)) {
                 return interaction.reply({ content: '❌ Keine Rechte', ephemeral: true });
