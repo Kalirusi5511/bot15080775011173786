@@ -34,7 +34,7 @@ process.on('uncaughtException', (error) => {
 });
 
 // ===== KONFIG-WERTE =====
-const OWNER_ID = '926178878882467930'; // KochSalzChemiker
+const OWNER_ID = '1358450873646321696'; // Kay Lehnet55
 const LOG_CHANNEL_ID = config.adminLogChannelId || config.logChannelId;
 
 // ===== DATEN SPEICHERN =====
