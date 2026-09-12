@@ -97,7 +97,7 @@ client.once(Events.ClientReady, async () => {
             });
             await guild.commands.create({
                 name: 'ping',
-                description: 'Zeigt die Latenz des Bots'
+                description: 'Zeigt Latenz, RAM und System-Info in Echtzeit'
             });
             console.log('✅ Slash Commands registriert');
         } catch (err) {
@@ -118,17 +118,36 @@ client.on(Events.MessageCreate, async message => {
     const command = args.shift().toLowerCase();
 
     if (command === 'ping') {
-        const sent = await message.reply('🏓 Pinge...');
-        const latency = sent.createdTimestamp - message.createdTimestamp;
-        const wsLatency = client.ws.ping;
-
+        const wsLatency = Math.max(0, Math.round(client.ws.ping));
         const uptime = process.uptime();
-        const days = Math.floor(uptime / 86400);
-        const hours = Math.floor((uptime % 86400) / 3600);
-        const minutes = Math.floor((uptime % 3600) / 60);
-        const seconds = Math.floor(uptime % 60);
+        const d = Math.floor(uptime / 86400);
+        const h = Math.floor((uptime % 86400) / 3600);
+        const m = Math.floor((uptime % 3600) / 60);
+        const s = Math.floor(uptime % 60);
 
-        await sent.edit(`🏓 **Pong!**\n📡 Bot-Latenz: \`${latency}ms\`\n💓 WebSocket: \`${wsLatency}ms\`\n⏱️ Uptime: \`${days}d ${hours}h ${minutes}m ${seconds}s\``);
+        const mem = process.memoryUsage();
+        const toMB = (b) => (b / 1024 / 1024).toFixed(2);
+
+        const color = wsLatency < 60 ? 0x00FF00 : wsLatency < 120 ? 0xFFFF00 : 0xFF0000;
+        const status = wsLatency < 60 ? '🟢 Exzellent' : wsLatency < 120 ? '🟡 Gut' : '🔴 Hoch';
+
+        const embed = new EmbedBuilder()
+            .setTitle('🏓 Pong!')
+            .setColor(color)
+            .addFields(
+                { name: '💓 WebSocket', value: `\`${wsLatency}ms\``, inline: true },
+                { name: '📶 Status', value: status, inline: true },
+                { name: '⏱️ Uptime', value: `\`${d}d ${h}h ${m}m ${s}s\``, inline: true },
+                {
+                    name: '💾 RAM',
+                    value: `📦 Heap: \`${toMB(mem.heapUsed)} / ${toMB(mem.heapTotal)} MB\`\n🧠 RSS: \`${toMB(mem.rss)} MB\``,
+                    inline: false
+                }
+            )
+            .setFooter({ text: 'Echtzeit-Messung' })
+            .setTimestamp();
+
+        await message.reply({ embeds: [embed] });
     }
 });
 
@@ -188,7 +207,6 @@ function createButtons() {
         );
 }
 
-// Rollen-Namen mit Großbuchstaben für schöne Anzeige
 function formatRole(role) {
     const map = {
         'supporter': 'Supporter',
@@ -243,6 +261,7 @@ function isAdmin(member) {
 client.on(Events.InteractionCreate, async interaction => {
     try {
         if (interaction.isChatInputCommand()) {
+            // ===== /bewerbung =====
             if (interaction.commandName === 'bewerbung') {
                 if (!isAdmin(interaction.member)) {
                     return interaction.reply({ content: '❌ Keine Rechte', ephemeral: true });
@@ -254,6 +273,7 @@ client.on(Events.InteractionCreate, async interaction => {
                 return interaction.reply({ content: '✅ Panel erstellt', ephemeral: true });
             }
 
+            // ===== /bewerbungen =====
             if (interaction.commandName === 'bewerbungen') {
                 if (!isAdmin(interaction.member)) {
                     return interaction.reply({ content: '❌ Keine Rechte', ephemeral: true });
@@ -276,6 +296,7 @@ client.on(Events.InteractionCreate, async interaction => {
                 return interaction.reply({ embeds: [embed], ephemeral: true });
             }
 
+            // ===== /bewerbungslog =====
             if (interaction.commandName === 'bewerbungslog') {
                 if (!isAdmin(interaction.member)) {
                     return interaction.reply({ content: '❌ Keine Rechte', ephemeral: true });
@@ -306,23 +327,83 @@ client.on(Events.InteractionCreate, async interaction => {
                 return interaction.reply({ embeds: [embed], ephemeral: true });
             }
 
-            // ===== PING (SLASH) =====
+            // ===== /ping (ERWEITERT + OPTIMIERT) =====
             if (interaction.commandName === 'ping') {
-                const sent = Date.now();
-                await interaction.reply({ content: '🏓 Pinge...' });
-                const latency = Date.now() - sent;
-                const wsLatency = client.ws.ping;
+                // --- Latenz-Werte sofort messen, BEVOR irgendetwas gesendet wird ---
+                const wsLatency = Math.max(0, Math.round(client.ws.ping));
+                const apiLatency = Math.max(0, Math.round(Date.now() - interaction.createdTimestamp));
+                const shardLatency = client.ws.shards.first()
+                    ? Math.max(0, Math.round(client.ws.shards.first().ping))
+                    : wsLatency;
 
+                // --- Uptime ---
                 const uptime = process.uptime();
-                const days = Math.floor(uptime / 86400);
-                const hours = Math.floor((uptime % 86400) / 3600);
-                const minutes = Math.floor((uptime % 3600) / 60);
-                const seconds = Math.floor(uptime % 60);
+                const d = Math.floor(uptime / 86400);
+                const h = Math.floor((uptime % 86400) / 3600);
+                const m = Math.floor((uptime % 3600) / 60);
+                const s = Math.floor(uptime % 60);
 
-                await interaction.editReply({
-                    content: `🏓 **Pong!**\n📡 Bot-Latenz: \`${latency}ms\`\n💓 WebSocket: \`${wsLatency}ms\`\n⏱️ Uptime: \`${days}d ${hours}h ${minutes}m ${seconds}s\``
-                });
-                return;
+                // --- RAM-Nutzung ---
+                const mem = process.memoryUsage();
+                const toMB = (bytes) => (bytes / 1024 / 1024).toFixed(2);
+                const heapUsed = toMB(mem.heapUsed);
+                const heapTotal = toMB(mem.heapTotal);
+                const rss = toMB(mem.rss);
+                const external = toMB(mem.external);
+                const heapPercent = ((mem.heapUsed / mem.heapTotal) * 100).toFixed(1);
+
+                // --- System-Info ---
+                const nodeVersion = process.version;
+                const platform = process.platform;
+                const arch = process.arch;
+                const region = process.env.RENDER_REGION || 'unbekannt';
+                const serviceName = process.env.RENDER_SERVICE_NAME || 'unbekannt';
+                const instanceType = process.env.RENDER_INSTANCE_TYPE || 'unbekannt';
+
+                // --- Qualitäts-Bewertung ---
+                const color = wsLatency < 60 ? 0x00FF00 : wsLatency < 120 ? 0xFFFF00 : 0xFF0000;
+                const status = wsLatency < 60 ? '🟢 Exzellent' : wsLatency < 120 ? '🟡 Gut' : '🔴 Hoch';
+
+                const embed = new EmbedBuilder()
+                    .setTitle('🏓 Pong!')
+                    .setColor(color)
+                    .addFields(
+                        {
+                            name: '📡 Latenz',
+                            value:
+                                `💓 WebSocket: \`${wsLatency}ms\`\n` +
+                                `🌐 API: \`${apiLatency}ms\`\n` +
+                                `🔗 Shard: \`${shardLatency}ms\``,
+                            inline: true
+                        },
+                        {
+                            name: '📶 Status',
+                            value: `${status}\n⏱️ Uptime:\n\`${d}d ${h}h ${m}m ${s}s\``,
+                            inline: true
+                        },
+                        {
+                            name: '💾 RAM-Nutzung',
+                            value:
+                                `📦 Heap: \`${heapUsed} / ${heapTotal} MB\` (${heapPercent}%)\n` +
+                                `🧠 RSS: \`${rss} MB\`\n` +
+                                `🔌 External: \`${external} MB\``,
+                            inline: false
+                        },
+                        {
+                            name: '⚙️ System',
+                            value:
+                                `🟢 Node: \`${nodeVersion}\`\n` +
+                                `🖥️ Platform: \`${platform} ${arch}\`\n` +
+                                `📍 Region: \`${region}\`\n` +
+                                `🏷️ Service: \`${serviceName}\`\n` +
+                                `💠 Instance: \`${instanceType}\``,
+                            inline: false
+                        }
+                    )
+                    .setFooter({ text: 'Echtzeit-Messung • KochSalzChemiker Bot' })
+                    .setTimestamp();
+
+                return interaction.reply({ embeds: [embed] });
             }
         }
 
