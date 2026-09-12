@@ -103,6 +103,17 @@ client.once(Events.ClientReady, async () => {
                 name: 'ping',
                 description: 'Zeigt Latenz, RAM und System-Info in Echtzeit'
             });
+            await guild.commands.create({
+                name: 'bot',
+                description: 'Bot-Verwaltung (Owner only)',
+                options: [
+                    {
+                        name: 'disconnect',
+                        description: 'Trennt den Bot vom Server (Test)',
+                        type: 1 // SUB_COMMAND
+                    }
+                ]
+            });
             console.log('✅ Slash Commands registriert');
         } catch (err) {
             console.error('❌ Fehler beim Registrieren der Commands:', err);
@@ -114,7 +125,6 @@ client.once(Events.ClientReady, async () => {
 // ===== LOGGING-SYSTEM MIT AUDIT-LOG (Wer war's?) ===================
 // ===================================================================
 
-// Hilfsfunktion: Wer war's? (aus Audit-Log)
 async function getExecutor(guild, actionType, targetId, maxAgeMs = 10000) {
     try {
         const logs = await guild.fetchAuditLogs({ type: actionType, limit: 5 });
@@ -134,7 +144,6 @@ async function getExecutor(guild, actionType, targetId, maxAgeMs = 10000) {
     return { executor: null, reason: null };
 }
 
-// Hilfsfunktion: Log + optionaler Ping
 async function sendLog(guild, embed, critical = false) {
     const logChannel = guild.channels.cache.get(LOG_CHANNEL_ID);
     if (!logChannel) return;
@@ -149,7 +158,7 @@ async function sendLog(guild, embed, critical = false) {
 client.on(Events.MessageDelete, async message => {
     if (!message.guild || message.author?.bot) return;
 
-    const { executor, reason } = await getExecutor(message.guild, 72, message.author.id);
+    const { executor } = await getExecutor(message.guild, 72, message.author.id);
 
     const embed = new EmbedBuilder()
         .setTitle('🗑️ Nachricht gelöscht')
@@ -186,7 +195,6 @@ client.on(Events.MessageUpdate, async (oldMessage, newMessage) => {
 client.on(Events.GuildMemberRemove, async member => {
     const { executor, reason } = await getExecutor(member.guild, 20, member.user.id);
 
-    // Kritisch, wenn ein BOT entfernt wurde
     const isBot = member.user.bot;
     const embed = new EmbedBuilder()
         .setTitle(isBot ? '🚨 BOT ENTFERNT' : '🚪 Mitglied entfernt')
@@ -203,7 +211,6 @@ client.on(Events.GuildMemberRemove, async member => {
 
 // ---- 4. MITGLIED GEJOINT ----
 client.on(Events.GuildMemberAdd, async member => {
-    // Wenn BOT → prüfen wer ihn eingeladen hat
     if (member.user.bot) {
         const { executor } = await getExecutor(member.guild, 28, member.user.id);
         const embed = new EmbedBuilder()
@@ -659,6 +666,54 @@ client.on(Events.InteractionCreate, async interaction => {
 
                 return interaction.reply({ embeds: [embed] });
             }
+
+            // ===== /bot disconnect (OWNER ONLY) =====
+            if (interaction.commandName === 'bot') {
+                const subcommand = interaction.options.getSubcommand();
+
+                if (subcommand === 'disconnect') {
+                    // NUR DU darfst das
+                    if (interaction.user.id !== OWNER_ID) {
+                        return interaction.reply({
+                            content: '❌ Nur der Bot-Owner darf diesen Befehl nutzen.',
+                            ephemeral: true
+                        });
+                    }
+
+                    // Bestätigen
+                    await interaction.reply({
+                        content: '⚠️ **Bot trennt sich in 3 Sekunden vom Server...**\nDer Log-Eintrag wird vorher gesendet.',
+                        ephemeral: true
+                    });
+
+                    // Log-Eintrag VOR dem Disconnect
+                    const logChannel = interaction.guild.channels.cache.get(LOG_CHANNEL_ID);
+                    if (logChannel) {
+                        const embed = new EmbedBuilder()
+                            .setTitle('⚠️ Bot-Disconnect (Test)')
+                            .addFields(
+                                { name: '👤 Ausgelöst von', value: `${interaction.user.tag} (${interaction.user.id})`, inline: true },
+                                { name: '📍 Server', value: interaction.guild.name, inline: true },
+                                { name: '🕒 Zeitpunkt', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: false }
+                            )
+                            .setColor(0xFF0000)
+                            .setTimestamp();
+                        await logChannel.send({ embeds: [embed] }).catch(() => {});
+                    }
+
+                    // 3 Sekunden warten, dann trennen
+                    setTimeout(async () => {
+                        try {
+                            console.log(`⚠️ Bot verlässt Guild "${interaction.guild.name}" auf Wunsch von ${interaction.user.tag}`);
+                            await interaction.guild.leave();
+                            console.log('✅ Bot hat Guild verlassen.');
+                        } catch (err) {
+                            console.error('❌ Fehler beim Verlassen:', err.message);
+                        }
+                    }, 3000);
+                    return;
+                }
+            }
         }
 
         // ===== BEWERBUNGS-BUTTONS =====
@@ -750,7 +805,6 @@ client.on(Events.InteractionCreate, async interaction => {
                 return interaction.editReply({ content: '❌ Bewerbung nicht gefunden' });
             }
 
-            // ===== ROLLENVERGABE =====
             let roleAssigned = false;
             let roleError = null;
 
@@ -779,7 +833,6 @@ client.on(Events.InteractionCreate, async interaction => {
                 }
             }
 
-            // ===== DM AN BEWERBER =====
             try {
                 const user = await client.users.fetch(application.userId);
                 if (user) {
@@ -806,7 +859,6 @@ client.on(Events.InteractionCreate, async interaction => {
                 console.log(`⚠️ User-Fetch fehlgeschlagen: ${err.message}`);
             }
 
-            // ===== ADMIN-LOG =====
             const logDetails =
                 `Rolle: ${application.role}\n` +
                 `User: ${application.userTag}\n` +
@@ -820,7 +872,6 @@ client.on(Events.InteractionCreate, async interaction => {
                 isApproved ? '#00FF00' : '#FF0000'
             );
 
-            // ===== DATEN AKTUALISIEREN =====
             pendingApplications.delete(appId);
             applications.pending = applications.pending.filter(a => a.id !== appId);
 
@@ -840,7 +891,6 @@ client.on(Events.InteractionCreate, async interaction => {
                 await interaction.message.edit({ components: [] }).catch(() => {});
             }
 
-            // ===== ANTWORT AN ADMIN =====
             let replyText = isApproved ? '✅ Bewerbung angenommen' : '❌ Bewerbung abgelehnt';
             if (isApproved && roleAssigned) replyText += ` • Rolle **${application.role}** vergeben`;
             if (isApproved && roleError) replyText += ` • ⚠️ Rollenvergabe fehlgeschlagen: ${roleError}`;
