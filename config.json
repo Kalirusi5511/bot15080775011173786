@@ -7,9 +7,9 @@
   "adminRoleId": "1458864664996745391",
   "roleIds": {
     "Supporter": "1500566326996107305",
-    "Moderator": "MODERATOR_ROLLEN_ID",
+    "Moderator": "1548219716772958218",
     "Entwickler": "1548214828873818172",
-    "Admin": "ADMIN_ROLLEN_ID"
+    "Admin": "1458864664996745391"
   },
   "maxBewerbungenProTag": 3,
   "wartenAufBewerbung": 86400000
