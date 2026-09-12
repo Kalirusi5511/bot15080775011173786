@@ -333,28 +333,22 @@ client.on(Events.InteractionCreate, async interaction => {
 
             // ===== /ping (ERWEITERT + OPTIMIERT v2) =====
             if (interaction.commandName === 'ping') {
-                // --- Latenz-Werte ---
                 let wsLatency = Math.max(0, Math.round(client.ws.ping));
                 const apiLatency = Math.max(0, Math.round(Date.now() - interaction.createdTimestamp));
-
-                // Fallback: Wenn WS-Ping noch 0 ist (erster Heartbeat), nutze API-Latenz als Schätzung
                 if (wsLatency === 0) wsLatency = apiLatency;
 
-                // Shard-Ping mit Fallback
                 let shardLatency = wsLatency;
                 try {
                     const shard = client.ws.shards.first();
                     if (shard && shard.ping > 0) shardLatency = Math.max(0, Math.round(shard.ping));
                 } catch (e) { /* ignoriere */ }
 
-                // --- Uptime ---
                 const uptime = process.uptime();
                 const d = Math.floor(uptime / 86400);
                 const h = Math.floor((uptime % 86400) / 3600);
                 const m = Math.floor((uptime % 3600) / 60);
                 const s = Math.floor(uptime % 60);
 
-                // --- RAM-Nutzung ---
                 const mem = process.memoryUsage();
                 const toMB = (bytes) => (bytes / 1024 / 1024).toFixed(2);
                 const heapUsed = toMB(mem.heapUsed);
@@ -363,12 +357,10 @@ client.on(Events.InteractionCreate, async interaction => {
                 const external = toMB(mem.external);
                 const heapPercent = ((mem.heapUsed / mem.heapTotal) * 100).toFixed(1);
 
-                // --- System-Info (mit Fallbacks) ---
                 const nodeVersion = process.version;
                 const platform = process.platform;
                 const arch = process.arch;
 
-                // Render setzt verschiedene Env-Vars – wir probieren alle durch
                 const region =
                     process.env.RENDER_REGION ||
                     process.env.RENDER_SERVICE_REGION ||
@@ -383,7 +375,6 @@ client.on(Events.InteractionCreate, async interaction => {
                     process.env.RENDER_INSTANCE_TYPE ||
                     (process.env.RENDER ? 'Render' : 'lokal');
 
-                // --- Qualitäts-Bewertung ---
                 const color = wsLatency < 60 ? 0x00FF00 : wsLatency < 120 ? 0xFFFF00 : 0xFF0000;
                 const status = wsLatency < 60 ? '🟢 Exzellent' : wsLatency < 120 ? '🟡 Gut' : '🔴 Hoch';
 
@@ -503,7 +494,7 @@ client.on(Events.InteractionCreate, async interaction => {
             return;
         }
 
-        // ===== APPROVE / REJECT BUTTONS =====
+        // ===== APPROVE / REJECT BUTTONS (MIT ROLLENVERGABE) =====
         if (interaction.isButton() && (interaction.customId.startsWith('approve_') || interaction.customId.startsWith('reject_'))) {
             if (!isAdmin(interaction.member)) {
                 return interaction.reply({ content: '❌ Keine Rechte', ephemeral: true });
@@ -517,6 +508,36 @@ client.on(Events.InteractionCreate, async interaction => {
                 return interaction.reply({ content: '❌ Bewerbung nicht gefunden', ephemeral: true });
             }
 
+            // ===== ROLLENVERGABE =====
+            let roleAssigned = false;
+            let roleError = null;
+
+            if (isApproved) {
+                try {
+                    const member = await interaction.guild.members.fetch(application.userId);
+                    const roleId = config.roleIds?.[application.role];
+
+                    if (!roleId) {
+                        roleError = `Keine Rollen-ID für "${application.role}" in config.json hinterlegt`;
+                        console.error(`❌ ${roleError}`);
+                    } else {
+                        const role = interaction.guild.roles.cache.get(roleId);
+                        if (!role) {
+                            roleError = `Rolle mit ID ${roleId} nicht gefunden`;
+                            console.error(`❌ ${roleError}`);
+                        } else {
+                            await member.roles.add(role);
+                            roleAssigned = true;
+                            console.log(`✅ Rolle "${role.name}" an ${application.userTag} vergeben`);
+                        }
+                    }
+                } catch (err) {
+                    roleError = err.message;
+                    console.error(`❌ Rollenvergabe fehlgeschlagen:`, err);
+                }
+            }
+
+            // ===== DM AN BEWERBER =====
             try {
                 const user = await client.users.fetch(application.userId);
                 if (user) {
@@ -529,6 +550,12 @@ client.on(Events.InteractionCreate, async interaction => {
                         .setColor(isApproved ? 0x00FF00 : 0xFF0000)
                         .setTimestamp();
 
+                    if (isApproved && roleAssigned) {
+                        resultEmbed.addFields({ name: '🎉 Rolle vergeben', value: `Du hast die Rolle **${application.role}** erhalten!` });
+                    } else if (isApproved && roleError) {
+                        resultEmbed.addFields({ name: '⚠️ Rollenvergabe', value: 'Rolle konnte nicht automatisch vergeben werden. Ein Admin wird sich kümmern.' });
+                    }
+
                     await user.send({ embeds: [resultEmbed] }).catch(() => {
                         console.log(`⚠️ Konnte User ${application.userTag} nicht per DM erreichen.`);
                     });
@@ -537,18 +564,31 @@ client.on(Events.InteractionCreate, async interaction => {
                 console.log(`⚠️ User-Fetch fehlgeschlagen: ${err.message}`);
             }
 
+            // ===== ADMIN-LOG =====
+            const logDetails =
+                `Rolle: ${application.role}\n` +
+                `User: ${application.userTag}\n` +
+                `Bewerbung ID: ${appId}\n` +
+                `Rollenvergabe: ${roleAssigned ? '✅ Erfolgreich' : (roleError ? `❌ ${roleError}` : '➖ Nicht zutreffend')}`;
+
             await sendAdminLog(
                 interaction,
                 isApproved ? 'Bewerbung angenommen' : 'Bewerbung abgelehnt',
-                `Rolle: ${application.role}\nUser: ${application.userTag}\nBewerbung ID: ${appId}`,
+                logDetails,
                 isApproved ? '#00FF00' : '#FF0000'
             );
 
+            // ===== DATEN AKTUALISIEREN =====
             pendingApplications.delete(appId);
             applications.pending = applications.pending.filter(a => a.id !== appId);
 
             if (isApproved) {
-                applications.accepted.push({ ...application, processedAt: new Date().toISOString() });
+                applications.accepted.push({
+                    ...application,
+                    processedAt: new Date().toISOString(),
+                    roleAssigned: roleAssigned,
+                    roleError: roleError
+                });
             } else {
                 applications.rejected.push({ ...application, processedAt: new Date().toISOString() });
             }
@@ -558,10 +598,12 @@ client.on(Events.InteractionCreate, async interaction => {
                 await interaction.message.edit({ components: [] }).catch(() => {});
             }
 
-            await interaction.reply({
-                content: isApproved ? '✅ Bewerbung angenommen' : '❌ Bewerbung abgelehnt',
-                ephemeral: true
-            });
+            // ===== ANTWORT AN ADMIN =====
+            let replyText = isApproved ? '✅ Bewerbung angenommen' : '❌ Bewerbung abgelehnt';
+            if (isApproved && roleAssigned) replyText += ` • Rolle **${application.role}** vergeben`;
+            if (isApproved && roleError) replyText += ` • ⚠️ Rollenvergabe fehlgeschlagen: ${roleError}`;
+
+            await interaction.reply({ content: replyText, ephemeral: true });
             return;
         }
 
