@@ -494,18 +494,21 @@ client.on(Events.InteractionCreate, async interaction => {
             return;
         }
 
-        // ===== APPROVE / REJECT BUTTONS (MIT ROLLENVERGABE) =====
+        // ===== APPROVE / REJECT BUTTONS (MIT ROLLENVERGABE + DEFER) =====
         if (interaction.isButton() && (interaction.customId.startsWith('approve_') || interaction.customId.startsWith('reject_'))) {
             if (!isAdmin(interaction.member)) {
                 return interaction.reply({ content: '❌ Keine Rechte', ephemeral: true });
             }
+
+            // ⚡ SOFORT BESTÄTIGEN – gibt uns 15 Minuten Zeit
+            await interaction.deferReply({ ephemeral: true });
 
             const appId = interaction.customId.replace('approve_', '').replace('reject_', '');
             const isApproved = interaction.customId.startsWith('approve_');
             const application = pendingApplications.get(appId);
 
             if (!application) {
-                return interaction.reply({ content: '❌ Bewerbung nicht gefunden', ephemeral: true });
+                return interaction.editReply({ content: '❌ Bewerbung nicht gefunden' });
             }
 
             // ===== ROLLENVERGABE =====
@@ -603,18 +606,22 @@ client.on(Events.InteractionCreate, async interaction => {
             if (isApproved && roleAssigned) replyText += ` • Rolle **${application.role}** vergeben`;
             if (isApproved && roleError) replyText += ` • ⚠️ Rollenvergabe fehlgeschlagen: ${roleError}`;
 
-            await interaction.reply({ content: replyText, ephemeral: true });
+            await interaction.editReply({ content: replyText });
             return;
         }
 
     } catch (error) {
         console.error('❌ Fehler in Interaction:', error);
         try {
-            if (!interaction.replied && !interaction.deferred) {
+            if (interaction.deferred || interaction.replied) {
+                await interaction.editReply({
+                    content: '⚠️ Ein Fehler ist aufgetreten. Bitte versuche es später erneut.'
+                }).catch(() => {});
+            } else {
                 await interaction.reply({
                     content: '⚠️ Ein Fehler ist aufgetreten. Bitte versuche es später erneut.',
                     ephemeral: true
-                });
+                }).catch(() => {});
             }
         } catch (replyError) {
             console.error('Konnte keine Fehlerantwort senden:', replyError);
