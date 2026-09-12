@@ -118,7 +118,10 @@ client.on(Events.MessageCreate, async message => {
     const command = args.shift().toLowerCase();
 
     if (command === 'ping') {
-        const wsLatency = Math.max(0, Math.round(client.ws.ping));
+        let wsLatency = Math.max(0, Math.round(client.ws.ping));
+        const apiLatency = Math.max(0, Math.round(Date.now() - message.createdTimestamp));
+        if (wsLatency === 0) wsLatency = apiLatency;
+
         const uptime = process.uptime();
         const d = Math.floor(uptime / 86400);
         const h = Math.floor((uptime % 86400) / 3600);
@@ -136,6 +139,7 @@ client.on(Events.MessageCreate, async message => {
             .setColor(color)
             .addFields(
                 { name: '💓 WebSocket', value: `\`${wsLatency}ms\``, inline: true },
+                { name: '🌐 API', value: `\`${apiLatency}ms\``, inline: true },
                 { name: '📶 Status', value: status, inline: true },
                 { name: '⏱️ Uptime', value: `\`${d}d ${h}h ${m}m ${s}s\``, inline: true },
                 {
@@ -327,14 +331,21 @@ client.on(Events.InteractionCreate, async interaction => {
                 return interaction.reply({ embeds: [embed], ephemeral: true });
             }
 
-            // ===== /ping (ERWEITERT + OPTIMIERT) =====
+            // ===== /ping (ERWEITERT + OPTIMIERT v2) =====
             if (interaction.commandName === 'ping') {
-                // --- Latenz-Werte sofort messen, BEVOR irgendetwas gesendet wird ---
-                const wsLatency = Math.max(0, Math.round(client.ws.ping));
+                // --- Latenz-Werte ---
+                let wsLatency = Math.max(0, Math.round(client.ws.ping));
                 const apiLatency = Math.max(0, Math.round(Date.now() - interaction.createdTimestamp));
-                const shardLatency = client.ws.shards.first()
-                    ? Math.max(0, Math.round(client.ws.shards.first().ping))
-                    : wsLatency;
+
+                // Fallback: Wenn WS-Ping noch 0 ist (erster Heartbeat), nutze API-Latenz als Schätzung
+                if (wsLatency === 0) wsLatency = apiLatency;
+
+                // Shard-Ping mit Fallback
+                let shardLatency = wsLatency;
+                try {
+                    const shard = client.ws.shards.first();
+                    if (shard && shard.ping > 0) shardLatency = Math.max(0, Math.round(shard.ping));
+                } catch (e) { /* ignoriere */ }
 
                 // --- Uptime ---
                 const uptime = process.uptime();
@@ -352,13 +363,25 @@ client.on(Events.InteractionCreate, async interaction => {
                 const external = toMB(mem.external);
                 const heapPercent = ((mem.heapUsed / mem.heapTotal) * 100).toFixed(1);
 
-                // --- System-Info ---
+                // --- System-Info (mit Fallbacks) ---
                 const nodeVersion = process.version;
                 const platform = process.platform;
                 const arch = process.arch;
-                const region = process.env.RENDER_REGION || 'unbekannt';
-                const serviceName = process.env.RENDER_SERVICE_NAME || 'unbekannt';
-                const instanceType = process.env.RENDER_INSTANCE_TYPE || 'unbekannt';
+
+                // Render setzt verschiedene Env-Vars – wir probieren alle durch
+                const region =
+                    process.env.RENDER_REGION ||
+                    process.env.RENDER_SERVICE_REGION ||
+                    'Frankfurt (EU)';
+
+                const serviceName =
+                    process.env.RENDER_SERVICE_NAME ||
+                    process.env.RENDER_EXTERNAL_HOSTNAME?.split('.')[0] ||
+                    'unbekannt';
+
+                const instanceType =
+                    process.env.RENDER_INSTANCE_TYPE ||
+                    (process.env.RENDER ? 'Render' : 'lokal');
 
                 // --- Qualitäts-Bewertung ---
                 const color = wsLatency < 60 ? 0x00FF00 : wsLatency < 120 ? 0xFFFF00 : 0xFF0000;
