@@ -1,8 +1,16 @@
 {
   "prefix": "!",
-  "bewerbungsChannelId": "DEINE_CHANNEL_ID",
+  "bewerbungsChannelId": "DEINE_ECHTE_CHANNEL_ID",
   "logChannelId": "1500566076793032844",
+  "adminLogChannelId": "1500566076793032844",
   "bewerbungsRolle": "1508098614285832332",
+  "adminRoleId": "DEINE_ADMIN_ROLLEN_ID",
+  "roleIds": {
+    "Supporter": "SUPPORTER_ROLLEN_ID",
+    "Moderator": "MODERATOR_ROLLEN_ID",
+    "Entwickler": "ENTWICKLER_ROLLEN_ID",
+    "Admin": "ADMIN_ROLLEN_ID"
+  },
   "maxBewerbungenProTag": 3,
   "wartenAufBewerbung": 86400000
 }
