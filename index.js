@@ -33,6 +33,10 @@ process.on('uncaughtException', (error) => {
     console.error('❌ Uncaught Exception:', error);
 });
 
+// ===== KONFIG-WERTE =====
+const OWNER_ID = '926178878882467930'; // KochSalzChemiker
+const LOG_CHANNEL_ID = config.adminLogChannelId || config.logChannelId;
+
 // ===== DATEN SPEICHERN =====
 const dataFilePath = path.join(__dirname, 'applications.json');
 
@@ -106,6 +110,242 @@ client.once(Events.ClientReady, async () => {
     }
 });
 
+// ===================================================================
+// ===== LOGGING-SYSTEM MIT AUDIT-LOG (Wer war's?) ===================
+// ===================================================================
+
+// Hilfsfunktion: Wer war's? (aus Audit-Log)
+async function getExecutor(guild, actionType, targetId, maxAgeMs = 10000) {
+    try {
+        const logs = await guild.fetchAuditLogs({ type: actionType, limit: 5 });
+        const entry = logs.entries.find(e =>
+            e.target?.id === targetId &&
+            Date.now() - e.createdTimestamp < maxAgeMs
+        );
+        if (entry) {
+            return {
+                executor: entry.executor,
+                reason: entry.reason || 'Kein Grund angegeben'
+            };
+        }
+    } catch (e) {
+        console.error('Audit-Log Fehler:', e.message);
+    }
+    return { executor: null, reason: null };
+}
+
+// Hilfsfunktion: Log + optionaler Ping
+async function sendLog(guild, embed, critical = false) {
+    const logChannel = guild.channels.cache.get(LOG_CHANNEL_ID);
+    if (!logChannel) return;
+    const payload = { embeds: [embed] };
+    if (critical) {
+        payload.content = `<@${OWNER_ID}> ⚠️ **Kritische Aktion erkannt!**`;
+    }
+    logChannel.send(payload).catch(() => {});
+}
+
+// ---- 1. NACHRICHT GELÖSCHT ----
+client.on(Events.MessageDelete, async message => {
+    if (!message.guild || message.author?.bot) return;
+
+    const { executor, reason } = await getExecutor(message.guild, 72, message.author.id);
+
+    const embed = new EmbedBuilder()
+        .setTitle('🗑️ Nachricht gelöscht')
+        .addFields(
+            { name: '👤 Autor', value: message.author?.tag || 'Unbekannt', inline: true },
+            { name: '📍 Channel', value: `<#${message.channel.id}>`, inline: true },
+            { name: '👮 Gelöscht von', value: executor ? executor.tag : '*unbekannt*', inline: true },
+            { name: '📝 Inhalt', value: message.content?.substring(0, 1000) || '*leer*' }
+        )
+        .setColor(0xFF0000)
+        .setTimestamp();
+    sendLog(message.guild, embed);
+});
+
+// ---- 2. NACHRICHT BEARBEITET ----
+client.on(Events.MessageUpdate, async (oldMessage, newMessage) => {
+    if (!newMessage.guild || newMessage.author?.bot) return;
+    if (oldMessage.content === newMessage.content) return;
+
+    const embed = new EmbedBuilder()
+        .setTitle('✏️ Nachricht bearbeitet')
+        .addFields(
+            { name: '👤 Autor', value: newMessage.author?.tag || 'Unbekannt', inline: true },
+            { name: '📍 Channel', value: `<#${newMessage.channel.id}>`, inline: true },
+            { name: '📄 Alt', value: oldMessage.content?.substring(0, 500) || '*leer*' },
+            { name: '📝 Neu', value: newMessage.content?.substring(0, 500) || '*leer*' }
+        )
+        .setColor(0xFFA500)
+        .setTimestamp();
+    sendLog(newMessage.guild, embed);
+});
+
+// ---- 3. MITGLIED GEKICKT / VERLASSEN ----
+client.on(Events.GuildMemberRemove, async member => {
+    const { executor, reason } = await getExecutor(member.guild, 20, member.user.id);
+
+    // Kritisch, wenn ein BOT entfernt wurde
+    const isBot = member.user.bot;
+    const embed = new EmbedBuilder()
+        .setTitle(isBot ? '🚨 BOT ENTFERNT' : '🚪 Mitglied entfernt')
+        .setThumbnail(member.user.displayAvatarURL())
+        .addFields(
+            { name: '👤 Mitglied', value: `${member.user.tag} (${member.user.id})`, inline: true },
+            { name: '👮 Ausgeführt von', value: executor ? executor.tag : '*selbst verlassen / unbekannt*', inline: true },
+            { name: '📝 Grund', value: reason || '*kein Grund*' }
+        )
+        .setColor(0xFF0000)
+        .setTimestamp();
+    sendLog(member.guild, embed, isBot);
+});
+
+// ---- 4. MITGLIED GEJOINT ----
+client.on(Events.GuildMemberAdd, async member => {
+    // Wenn BOT → prüfen wer ihn eingeladen hat
+    if (member.user.bot) {
+        const { executor } = await getExecutor(member.guild, 28, member.user.id);
+        const embed = new EmbedBuilder()
+            .setTitle('🚨 BOT HINZUGEFÜGT')
+            .addFields(
+                { name: '🤖 Bot', value: `${member.user.tag} (${member.user.id})`, inline: true },
+                { name: '👤 Eingeladen von', value: executor ? executor.tag : '*unbekannt*', inline: true }
+            )
+            .setColor(0xFF00FF)
+            .setTimestamp();
+        sendLog(member.guild, embed, true);
+        return;
+    }
+
+    const embed = new EmbedBuilder()
+        .setTitle('📥 Mitglied beigetreten')
+        .setDescription(`${member.user.tag} (${member.user.id})`)
+        .setThumbnail(member.user.displayAvatarURL())
+        .setColor(0x00FF00)
+        .setTimestamp();
+    sendLog(member.guild, embed);
+});
+
+// ---- 5. ROLLEN ÄNDERUNG ----
+client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
+    const added = newMember.roles.cache.filter(r => !oldMember.roles.cache.has(r.id));
+    const removed = oldMember.roles.cache.filter(r => !newMember.roles.cache.has(r.id));
+
+    if (added.size > 0) {
+        const { executor } = await getExecutor(newMember.guild, 25, newMember.user.id);
+        const embed = new EmbedBuilder()
+            .setTitle('➕ Rolle vergeben')
+            .addFields(
+                { name: '👤 Mitglied', value: newMember.user.tag, inline: true },
+                { name: '🎭 Rolle(n)', value: added.map(r => r.name).join(', '), inline: true },
+                { name: '👮 Von', value: executor ? executor.tag : '*unbekannt*', inline: true }
+            )
+            .setColor(0x00FF00)
+            .setTimestamp();
+        sendLog(newMember.guild, embed);
+    }
+
+    if (removed.size > 0) {
+        const { executor } = await getExecutor(newMember.guild, 25, newMember.user.id);
+        const embed = new EmbedBuilder()
+            .setTitle('➖ Rolle entfernt')
+            .addFields(
+                { name: '👤 Mitglied', value: newMember.user.tag, inline: true },
+                { name: '🎭 Rolle(n)', value: removed.map(r => r.name).join(', '), inline: true },
+                { name: '👮 Von', value: executor ? executor.tag : '*unbekannt*', inline: true }
+            )
+            .setColor(0xFF0000)
+            .setTimestamp();
+        sendLog(newMember.guild, embed);
+    }
+});
+
+// ---- 6. CHANNEL ERSTELLT / GELÖSCHT ----
+client.on(Events.ChannelCreate, async channel => {
+    if (!channel.guild) return;
+    const { executor } = await getExecutor(channel.guild, 10, channel.id);
+    const embed = new EmbedBuilder()
+        .setTitle('📢 Channel erstellt')
+        .addFields(
+            { name: '📛 Name', value: channel.name, inline: true },
+            { name: '👮 Von', value: executor ? executor.tag : '*unbekannt*', inline: true }
+        )
+        .setColor(0x00FF00)
+        .setTimestamp();
+    sendLog(channel.guild, embed);
+});
+
+client.on(Events.ChannelDelete, async channel => {
+    if (!channel.guild) return;
+    const { executor } = await getExecutor(channel.guild, 12, channel.id);
+    const embed = new EmbedBuilder()
+        .setTitle('🗑️ Channel gelöscht')
+        .addFields(
+            { name: '📛 Name', value: channel.name, inline: true },
+            { name: '👮 Von', value: executor ? executor.tag : '*unbekannt*', inline: true }
+        )
+        .setColor(0xFF0000)
+        .setTimestamp();
+    sendLog(channel.guild, embed, true);
+});
+
+// ---- 7. ROLLE ERSTELLT / GELÖSCHT ----
+client.on(Events.GuildRoleCreate, async role => {
+    const { executor } = await getExecutor(role.guild, 30, role.id);
+    const embed = new EmbedBuilder()
+        .setTitle('🎭 Rolle erstellt')
+        .addFields(
+            { name: '📛 Name', value: role.name, inline: true },
+            { name: '👮 Von', value: executor ? executor.tag : '*unbekannt*', inline: true }
+        )
+        .setColor(0x00FF00)
+        .setTimestamp();
+    sendLog(role.guild, embed);
+});
+
+client.on(Events.GuildRoleDelete, async role => {
+    const { executor } = await getExecutor(role.guild, 32, role.id);
+    const embed = new EmbedBuilder()
+        .setTitle('🗑️ Rolle gelöscht')
+        .addFields(
+            { name: '📛 Name', value: role.name, inline: true },
+            { name: '👮 Von', value: executor ? executor.tag : '*unbekannt*', inline: true }
+        )
+        .setColor(0xFF0000)
+        .setTimestamp();
+    sendLog(role.guild, embed, true);
+});
+
+// ---- 8. BAN / UNBAN ----
+client.on(Events.GuildBanAdd, async ban => {
+    const { executor, reason } = await getExecutor(ban.guild, 22, ban.user.id);
+    const embed = new EmbedBuilder()
+        .setTitle('🔨 Mitglied gebannt')
+        .setThumbnail(ban.user.displayAvatarURL())
+        .addFields(
+            { name: '👤 User', value: `${ban.user.tag} (${ban.user.id})`, inline: true },
+            { name: '👮 Von', value: executor ? executor.tag : '*unbekannt*', inline: true },
+            { name: '📝 Grund', value: reason || '*kein Grund*' }
+        )
+        .setColor(0xFF0000)
+        .setTimestamp();
+    sendLog(ban.guild, embed, true);
+});
+
+client.on(Events.GuildBanRemove, async ban => {
+    const { executor } = await getExecutor(ban.guild, 23, ban.user.id);
+    const embed = new EmbedBuilder()
+        .setTitle('🔓 Ban aufgehoben')
+        .addFields(
+            { name: '👤 User', value: `${ban.user.tag}`, inline: true },
+            { name: '👮 Von', value: executor ? executor.tag : '*unbekannt*', inline: true }
+        )
+        .setColor(0x00FF00)
+        .setTimestamp();
+    sendLog(ban.guild, embed);
+});
+
 // ===== PREFIX COMMANDS (!ping) =====
 client.on(Events.MessageCreate, async message => {
     if (message.author.bot) return;
@@ -155,7 +395,7 @@ client.on(Events.MessageCreate, async message => {
     }
 });
 
-// ===== HELPER =====
+// ===== HELPER (BEWERBUNG) =====
 async function sendAdminLog(interaction, action, details, color = '#00FF00') {
     const logChannel = interaction.guild.channels.cache.get(config.adminLogChannelId);
     if (logChannel) {
@@ -331,7 +571,7 @@ client.on(Events.InteractionCreate, async interaction => {
                 return interaction.reply({ embeds: [embed], ephemeral: true });
             }
 
-            // ===== /ping (ERWEITERT + OPTIMIERT v2) =====
+            // ===== /ping =====
             if (interaction.commandName === 'ping') {
                 let wsLatency = Math.max(0, Math.round(client.ws.ping));
                 const apiLatency = Math.max(0, Math.round(Date.now() - interaction.createdTimestamp));
@@ -494,13 +734,12 @@ client.on(Events.InteractionCreate, async interaction => {
             return;
         }
 
-        // ===== APPROVE / REJECT BUTTONS (MIT ROLLENVERGABE + DEFER) =====
+        // ===== APPROVE / REJECT BUTTONS =====
         if (interaction.isButton() && (interaction.customId.startsWith('approve_') || interaction.customId.startsWith('reject_'))) {
             if (!isAdmin(interaction.member)) {
                 return interaction.reply({ content: '❌ Keine Rechte', ephemeral: true });
             }
 
-            // ⚡ SOFORT BESTÄTIGEN – gibt uns 15 Minuten Zeit
             await interaction.deferReply({ ephemeral: true });
 
             const appId = interaction.customId.replace('approve_', '').replace('reject_', '');
